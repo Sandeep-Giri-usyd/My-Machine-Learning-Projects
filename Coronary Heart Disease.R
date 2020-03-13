@@ -1,4 +1,3 @@
-#COMP5310 Project 1
 #Load Required Packages
 install.packages('bindrcpp')
 install.packages('curl')
