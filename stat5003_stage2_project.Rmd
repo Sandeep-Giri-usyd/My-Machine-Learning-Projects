@@ -1,0 +1,230 @@
+---
+title: "STAT5003 Project Stage 1"
+author: "Sandeep Giri 430171617"
+date: "1/05/2020"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r initial setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(normtest)
+library(gridExtra)
+library(corrplot)
+library(knitr)
+library(kableExtra)
+```
+## Problem Overview:
+\vspace{-3truemm}
+
+The aim of this problem is to accurately classify whether an individual is undergoing an epileptic seizure or not. This problem is particularly significant as seizures can result in potentially fatal injuries, through the loss of muscular control and the loss of consciousness [1]. For seizure-prone individuals, early and robust detection of the onset of a seizure is of paramount importance. There will be two main machine learning classification tasks discussed in this report. The first task will be a binary classification task predicting whether an individual is having a seizure or not. The second task will be an extension into a multi class task, predicting the presence of epileptic seizures among four other nonepileptic classes, for the purposes of more robust detection of seizures.
+
+## Dastaset Description:
+\vspace{-3truemm}
+
+This dataset contains 11500 samples and 178 features. Each observation represents a series of features with Electroencephalography (EEG) voltages for each patient over a one second period. The voltage readings can be either positive or negative. The response variable consists of 5 classes: class 1 represents an individual undergoing an epileptic seizure, while classes 2-5 represents various types of healthy patients: 
+
+Class 2: A healthy individual with EEG readings obtained from the epileptic zone of the brain. 
+Class 3: A healthy individual with EEG readings obtained from the nonepileptic zone of the brain. 
+Class 4: A healthy individual with EEG readings taken while eyes are closed. 
+Class 5: A healthy indiviudal with EEG readings taken with eyes open. 
+
+The dataset's size and complexity (in terms of the number of observations and the number of features) presents a challenge in undertaking a classifciation task for seizure prediction. The large number of features could mean that some sort of dimensionality reduction technique will be needed to avoid an overfitting problem. There could be a large amount of redundant features in the dataset, hence a technique such as Principal Component Analysis (PCA) could be considered. Furthermore, the large number of observations (as well as the number of features) could present a challenge in terms of computational complexity, meaning implementing machine learning with hyperparameter tuning and cross validation could be a time consuming process. However this is essential for producing robust results, and R is equipped to handle a dataset of such complexity. 
+
+##  Data cleaning and data wrangling
+\vspace{-3truemm}
+There were no missing values in this dataset and all columns were numeric. The dataset was loaded from the UCI machine learning repository into R using the fread function. 
+
+```{r loading_Data, include=FALSE,results=FALSE,echo=FALSE}
+#load("C:/Users/sande/OneDrive/Documents/Workspace_full_1.RData")
+seizures_data<-fread("C:/Users/sande/OneDrive/Documents/Epileptic_Seizures_Dataset.csv")
+```
+##Exploratory data analysis/visualization of the data:
+
+Talk about Correlations,PCA,distribution analysis (and outliers),possible transformations to make the data more normally distributed (e.g. Yeo Johnson Transform- which did not work)
+
+### Distribution of Response Variable (Binary Case):
+\vspace{-3truemm}
+
+First, we examine the distribution of the response variable for the binary case where class 1 represents the positive class and classes 2,3,4,5 represent the negative class. Figure 1 shows this:
+
+```{r EDA_response,include=TRUE,results=TRUE,echo=FALSE,fig.height=3.7, fig.width=4}
+seizures_data_binary<-seizures_data
+seizures_data_binary$y<-ifelse(seizures_data_binary$y==1,1,0)
+summarize_response<-seizures_data_binary %>% select(y)  %>% mutate(y_flag=ifelse(y==0,"NO","YES"))%>%count(y_flag)%>%mutate(percent = n/sum(n))
+ggplot(summarize_response, aes(x=y_flag,y=percent,fill=percent,label = scales::percent(percent)))+geom_bar(stat = "identity")+labs(title="Fig 1: Histogram for Presence of Epileptic Seizure", x="Presence of Epileptic Seizure", y="Percentage")+scale_fill_gradient(labels = scales::percent_format())+geom_text(position = position_dodge(width = .9),vjust = -0.5,size = 3)+theme(axis.title.x = element_text(size=8),axis.title.y=element_text(size=8),plot.title = element_text(size=8))
+```
+This shows that 80% of the observations fall into the negative class while 20% of observations fall into the positive class, which indicates that the binary problem represents an imbalanced classification problem. In such a situation, if the class distribution is left unchanged, the models might not be trained on enough positive class examples to accurately identify one. Hence, an oversampling technique such as SMOTE, which creates new "synthetic" positive examples representing the minority class, must be considered. 
+
+Next, we examine the distribution of the response variable for the multi-class case.
+
+```{r EDA_response_multi,include=TRUE,results=TRUE,echo=FALSE,fig.height=3.7, fig.width=4}
+summarize_response<-seizures_data %>% select(y) %>% count(y)%>%mutate(percent = n/sum(n))
+ggplot(summarize_response, aes(x=y,y=percent,fill=percent,label = scales::percent(percent)))+geom_bar(stat = "identity")+labs(title="Fig 1: Histogram for Presence of Epileptic Seizure", x="Class", y="Percentage")+scale_fill_gradient(labels = scales::percent_format())+geom_text(position = position_dodge(width = .9),vjust = -0.5,size = 3)+theme(axis.title.x = element_text(size=8),axis.title.y=element_text(size=8),plot.title = element_text(size=8))
+```
+In the multi-class case, the distribution of each class is exactly equal, so there is no need for any oversampling techniques here. 
+
+### Distribution of explanatory variables:
+\vspace{-3truemm}
+
+An examination of the distirbution of explanatory variables needs to be conducted to identify any potential outliers. The plots below examines the Kernel Density Estimates (using the Gaussian kernel) for the first 5 variables, after the variables have been centered and scaled. The normal distribution has been superimposed on top of each one (in red, with mean and standard deviation parameters set to those of the variable) to get a better idea of how close to normal each distribution is. 
+
+```{r EDA_centre_scale, include=FALSE,results=FALSE,echo=FALSE}
+model_data<-seizures_data[,2:ncol(seizures_data)]
+model_data_x<-model_data[,!"y"]
+preprocobj<-preProcess(model_data_x, method = c("center","scale"))
+model_data_x_processed<-predict(preprocobj,model_data_x)
+model_data_processed<-model_data_x_processed
+model_data_processed$y<-model_data$y
+```
+
+```{r hist_kde, include=TRUE,results=TRUE,echo=FALSE,fig.height=3, fig.width=5}
+kde_plots<-list()
+for (i in 1:5){
+  kde_plots[[i]]<-ggplot(data.frame(x = as.vector(unlist(model_data_x_processed[,..i]))), 
+                         aes(x = x)) + geom_density() +ggtitle(paste0("KDE of ",colnames(model_data_x_processed)[i]))+theme(axis.title.x = element_text(size=8),axis.title.y=element_text(size=8),plot.title = element_text(size=8))+stat_function(fun = dnorm, args = list(mean = mean(as.vector(unlist(model_data_x_processed[,..i]))), sd = sd(as.vector(unlist(model_data_x_processed[,..i])))),col="Red")
+}
+do.call("grid.arrange", c(kde_plots, ncol=3))
+```
+
+Visually, the variables appear to be non-normally distirbuted, showing a more narrow, steep peak at the centre of the distribution. This is further confirmed using the Shapiro Wilk test conducted across all variables. This test was used because it has the highest statistical power for a given signficance level among normality tests. Note that this was an approximation as the maximum size the test can handle is only 5000 observations, while the dataset has 11500 samples.
+
+```{r shapiro_wilk, include=TRUE,results=TRUE,echo=TRUE}
+pearson_Test_pvals<-as.numeric(sapply(model_data_x_processed, function (x) shapiro.test(x[1:5000])$p.value))
+length(which(pearson_Test_pvals>=0.05))
+```
+
+This confirms our visual observation, with all variables being non-normally distributed having p values lower than 0.05. 
+
+###Transforming the data:
+\vspace{-3truemm}
+
+The data might be able to be transformed to make it more normally distributed. A Yeo Johnson transform was considred, a monotonic power transformation used to make the data more normally distributed which can handle both positive and negative values. However, after the transformation the results of the Shapiro Wilk test indicate that the data still remained non-normally distributed, with all p-values less than 0.05. Hence the transformation was not used.
+
+```{r shapiro_wilk_2, include=TRUE,results=TRUE,echo=TRUE}
+preprocessParams <- preProcess(model_data_x, method=c("YeoJohnson")) 
+transformed <- predict(preprocessParams, model_data_x) 
+shapiro_Test_pvals<-as.numeric(sapply(transformed, function (x) shapiro.test(x[1:5000])$p.value))
+length(which(shapiro_Test_pvals>=0.05))
+```
+
+### Outliers:
+\vspace{-3truemm}
+The potential presence of outliers in our features was examined through a series of boxplots. Figure 3 shows the boxplots for the first 5 variables:
+
+```{r boxplots, include=TRUE,results=TRUE,echo=FALSE,fig.height=3, fig.width=6}
+boxplots<-list()
+for (i in 1:5){
+  boxplots[[i]]<-ggplot(data.frame(x = as.vector(unlist(model_data_x_processed[,..i]))), aes(x = x)) + geom_boxplot() +ggtitle(paste0("Boxplot of ",colnames(model_data_x_processed)[i]))+theme(axis.title.x = element_text(size=8),axis.title.y=element_text(size=8),plot.title = element_text(size=8))
+}
+do.call("grid.arrange", c(boxplots, ncol=3))
+```
+The boxplots in figure 3 show the potential presence of outliers in the data, with observations visually far away from the rest of the data points. However, it is difficult to tell whether these a 'real' outliers in the absence of a normal distribution. These observations could be valid measurements, and were kept in when machine learning was applied. 
+
+### Correlation between explanatory variables:
+\vspace{-3truemm}
+
+Next, the correlations between our features was examined to determine whether there was any degree of redundancy in our data, which could lead to an overfitting problem. Figure 4 shows the correlations between the first 10 features, using the Spearman Correlation coefficient, given that our data is non-nromally distributed. 
+
+```{r correlations,include=TRUE,results=TRUE,echo=FALSE,fig.height=3.5, fig.width=3.5}
+corrplot(cor(model_data_x_processed[,1:10],method="spearman"))
+```
+
+Figure 4 shows pairs of highly correlated variables (e.g. variables X1 and X2). Potentially, one out of a pair of highly correlated variables could be removed to reduce the potential for an overfitting problem. However, this problem could also be addressed using a dimensionality reduction technique such as PCA, discussed in the next section.
+
+### PCA plots:
+\vspace{-3truemm}
+
+Next, for the purposes of dimensionality reduction, Principal Component Analysis (PCA) was examined. As there are a large number of features in our dataset (178), with potentially redundant features exhibiting high degrees of correlation with other features (examined in the previous section), PCA must be considered to prevent problems such as overfitting when machine learning is applied. Figure 5 shows the proportion of variation explained (on the y axis) by the first n principal components (on the x axis), to get a better idea of how many principal components are needed to capture a large proportion of the total variation in our features. 
+
+```{r centre_scale, include=FALSE,results=FALSE,echo=FALSE}
+model_data_PCA <- prcomp(model_data[, 1:(ncol(model_data)-1)], center = FALSE, scale = FALSE)
+cumsum_model_data_PCA <- cumsum(model_data_PCA$sdev^2 / sum(model_data_PCA$sdev^2))
+PCA_df<-data.table(No_Principal_Components=1:length(cumsum_model_data_PCA),Proportion_Explained_Variance=cumsum_model_data_PCA)
+```
+
+```{r PCA_PLOTS, include=TRUE,results=TRUE,echo=FALSE,fig.height=3, fig.width=4}
+ggplot(PCA_df,aes(x=No_Principal_Components,y=Proportion_Explained_Variance))+geom_line()+labs(title="Fig 5: Proportion of Explained Variance by number of PCA components", x="Number of components", y="Proportion of Explained Variance")+theme(axis.title.x = element_text(size=8),axis.title.y=element_text(size=8),plot.title = element_text(size=8))
+```
+
+```{r PCA_PLOTS_1, include=TRUE,results=TRUE,echo=TRUE}
+min(which(cumsum_model_data_PCA>=0.9))
+```
+Figure 5 shows that 33 principal components capture 95% of the total variation in our dataset, so this will be a good benchmark for the number of principal components used. When machine learning is applied, the PCA transformation will take place as part of the cross validation procedure. In each fold of cross validation, the training data is transformed into orthogonal principal components explaining 95% of the total variation in the data, and the test data is projected onto the principal components of the training data. 
+
+##Feature Engineering:
+#Centering and Scaling our data:
+#PCA:
+#SMOTE:
+
+A number of transformations will be included in our machine learning pipeline during the cross validation process. These transformations took place in each cross validation fold to ensure no data leakage (i.e. so that the parameters used to to transform each CV hold-out set are directly from those used to transform the CV training set rather than being based on data it hasn't been exposed to yet). 
+
+Centering and Scaling Data: Scaling is important as many machine learning algorithms using a Euclidean distance measure are sensitive to magnitudes, while centering is important in linear methods as it allows easier interpretation of the intercept term. The following transformation takes place for the features in each cv fold. 
+
+$$ \sf{x_{transformed}}=\frac{x-\sf{\mu_{cvfoldtraining}}}{\sf{\sigma_{cvfoldtraining}}}$$
+PCA: As mentioned before, principal component analysis is essential for dimensionality reduction, an important process in this high dimensionality dataset which can be prone to overfitting. In R's *caret* pacakge, the default setting transforms the data using the N principal components that capture 95% of the total variation in the in the training part of each CV fold. The test set will then be projected onto the principal components of the training set. 
+
+SMOTE: SMOTE, an oversampling technique, will be used in the binary classification case where there is a class imbalance (only 20% of examples are in the positive class). As mentioned earlier, this will be used to ensure that the models have had sufficient exposure to positive class examples to accuarely predict one. Synthetic examples will be created based on the training data in each CV fold. 
+
+##Classifciation algorithms used:
+There will be 5 machine learning classification algorithms used for both the binary and multi-class case. 
+
+Logistic Regression: This method utilizes the logistic function to model the dependent variable.
+Random Forest: Creates an ensemble of trees using bootstrapping. For the purposes of classificaiton, some aggregate measure is used (e.g. the most frequently occuring predicted class across the trees). Ihe algorithm involves two hyperparameters, *ntree* and *mtry*, with *ntree* representing the number of trees to grow and *mtry* representing the number of potential variables to be used at each split. 
+GBM (Gradient Boosted Machines): Creates an ensemble of trees, where each tree is based on the residuals of the previous trees. This algorithm involves four main hyperparameters, including *interaction.depth* representing the depth of each tree, *n.trees* representing the number of trees to grow, *shrinkage* representing the learning rate, or the weight of each tree to classifying the final outcome and *n.minobsinnode*, representing the number of observations in the terminal nodes.
+KNN: Finds the *k* closest neighbours for each observation in the test data using a distance calculation (the default is Euclidean) and classifies the test data point according to the majoirty class among these closest training points. 
+XGBoost: An implementation of GBM, but with advantages over traditional boosting with additional hyperparameters.The method involves several hyperparameters: *nrounds* represents the number of trees, *gamma* representing a regularization parameter controlling model complexity, *max_depth* specifying the maximum depth of each tree, *min_child_weight* controlling overfitting by placing a minimum sum of weights for each leaf node, *colsample_bytree* representing the fraction of variables to be used in each tree, *eta* representing the learning rate and *subsample* representing the fraction of observations used in each tree. 
+
+
+
+
+## Evaluating the machine learning classification model:
+\vspace{-3truemm}
+The machine learning models will be evaluated based on the following measures:  
+Accuracy: The proportion of observations correctly predicted.  
+Precision: The proportion of predicted positive class cases correctly identified.  
+Recall: The proportion of actual positive class cases correctly identified.  
+F1- Score: The harmonic mean between precision and recall:  
+$$ \frac{2\times precision\times recall}{precision+recall}$$
+The F1-Score will be the most important measure, as it is an indication of performance across both precision and recall metrics. Both precision and recall are important as it is essential to both correctly identify positive cases, as well as to identify as high a proportion of actual cases as possible. Accuracy carries importance too, however, given this is an imbalanced classification problem, the score can be misleading. For example, if the model classifies everything as negative, an 80% accuracy score will still be obtained, despite the model missing all positive cases. 
+
+The model with the best cross validation F1-score will be chosen, and its performance will be evaluated on the test set. Cross validation performance is the most important way of measuring model performance, as the model is repeatedly trained and evaluated across a number of random samples. 
+
+##Data cleaning and data wrangling:
+IDK, maybe talk about how theres no missing values and stuff. 
+
+##Exploratory data analysis/visualization of the data:
+Talk about Correlations,PCA,distribution analysis (and outliers),possible transformations to make the data more normally distributed (e.g. Yeo Johnson Transform- which did not work)
+
+##Feature engineering:
+-Talk about centering,scaling,PCA,SMOTE techniques
+
+##Classifciation algorithms used:
+-Talk briefly about each one, how the algoirthm works etc. How tuning the hyperparameters work. 
+
+##Classification performance Evaluation 
+-Talk about Accuracy,AUC,Precision,Recall,F1-Score for different algortihms across training and test sets for both binary and multiclass
+
+##Conclusion:
+-Talk about the final results and the best model found. Talk about how accurate prediction of seizures was achieved. 
+
+
+
+
+
+# References
+[1]	THE EPILEPSY CENTRE, "What is epilepsy",   
+<https://epilepsycentre.org.au/what-is-epilepsy/>  
+[2] Towards	Data	Science,	“Epileptic Seizure Classification ML Algorithms”  
+<https://towardsdatascience.com/seizure-classification-d0bb92d19962>  
+[3] UCI Machine Learning Repository  
+<https://archive.ics.uci.edu/ml/datasets/Epileptic+Seizure+Recognition>
+
+
+
